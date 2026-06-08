@@ -6,36 +6,33 @@ import MemoModal from '@/components/MemoModal';
 import { Memo } from '@/types';
 import { supabase } from '@/lib/supabase';
 
-const MOCK_MEMOS: Memo[] = [
-  {
-    id: 'mock-1',
-    type: 'account',
-    title: '[데모] Figma 디자인 공용 계정',
-    content: '아이디: design-public@company.com\n비밀번호: CompanyFigma2026!\n\n※ Supabase 연동 시 이 데모 데이터는 실시간 DB 정보로 교체됩니다.',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-  },
-  {
-    id: 'mock-2',
-    type: 'site',
-    title: '[데모] 사내 UI/UX 컴포넌트 가이드라인 및 웹 규격',
-    content: '주소: https://guide.internal.company.com\n\n공식 사내 디자인 규격 및 프론트엔드 컴포넌트 사용 안내서입니다. .env.local 설정 후 이용해 주세요.',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
-    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
-  },
-];
+const COLOR_MAPS: Record<string, { border: string; bg: string; text: string; lightBg: string }> = {
+  blue: { border: 'border-blue-500', bg: 'bg-blue-500', text: 'text-blue-700', lightBg: 'bg-blue-50/70' },
+  purple: { border: 'border-purple-500', bg: 'bg-purple-500', text: 'text-purple-700', lightBg: 'bg-purple-50/70' },
+  green: { border: 'border-emerald-500', bg: 'bg-emerald-500', text: 'text-emerald-700', lightBg: 'bg-emerald-50/70' },
+  orange: { border: 'border-orange-500', bg: 'bg-orange-500', text: 'text-orange-700', lightBg: 'bg-orange-50/70' },
+  pink: { border: 'border-pink-500', bg: 'bg-pink-500', text: 'text-pink-700', lightBg: 'bg-pink-50/70' },
+  gray: { border: 'border-slate-400', bg: 'bg-slate-500', text: 'text-slate-700', lightBg: 'bg-slate-100/70' },
+};
 
 export default function Home() {
   const [memos, setMemos] = useState<Memo[]>([]);
-  const [selectedTab, setSelectedTab] = useState<'all' | 'account' | 'site'>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Independent searches
+  const [accountQuery, setAccountQuery] = useState('');
+  const [siteQuery, setSiteQuery] = useState('');
+
+  // Modals state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedMemo, setSelectedMemo] = useState<Memo | null>(null);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [preselectedType, setPreselectedType] = useState<'account' | 'site'>('account');
+
+  // Load states
   const [isLoading, setIsLoading] = useState(true);
   const [isEnvConfigured, setIsEnvConfigured] = useState(true);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-  // Check if env vars are present
+  // Check env settings
   useEffect(() => {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -44,7 +41,19 @@ export default function Home() {
     }
   }, []);
 
-  // Fetch memos from Supabase
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ message, type });
+  };
+
+  // Toast automatic dismiss
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+
+  // Read data from Supabase
   const fetchMemos = async () => {
     setIsLoading(true);
     try {
@@ -53,9 +62,7 @@ export default function Home() {
         .select('*')
         .order('updated_at', { ascending: false });
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
       if (data) {
         const mapped: Memo[] = data.map((item: any) => ({
@@ -65,13 +72,22 @@ export default function Home() {
           content: item.content,
           createdAt: item.created_at,
           updatedAt: item.updated_at,
+          emoji: item.emoji,
+          color: item.color,
+          serviceName: item.service_name,
+          planName: item.plan_name,
+          paymentContent: item.payment_content,
+          billingCycle: item.billing_cycle,
+          paymentAmount: item.payment_amount,
+          loginId: item.login_id,
+          password: item.password,
+          siteUrl: item.site_url,
         }));
         setMemos(mapped);
       }
-    } catch (e) {
-      console.error('Failed to fetch from Supabase. Falling back to demo/mock data.', e);
-      // Fallback to mock data if DB read fails
-      setMemos(MOCK_MEMOS);
+    } catch (e: any) {
+      console.error('Failed to fetch from Supabase:', e);
+      showToast(`DB 불러오기 실패: ${e?.message || '네트워크 오류'}`, 'error');
     } finally {
       setIsLoading(false);
     }
@@ -81,88 +97,56 @@ export default function Home() {
     fetchMemos();
   }, []);
 
-  // Toast auto-dismissal
-  useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => {
-        setToast(null);
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [toast]);
-
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
-    setToast({ message, type });
-  };
-
-  // Create or update memo
-  const handleSaveMemo = async (memoData: { type: 'account' | 'site'; title: string; content: string; id?: string }) => {
+  // Write/Edit to Supabase
+  const handleSaveMemo = async (memoData: Partial<Memo> & { type: 'account' | 'site' }) => {
     const now = new Date().toISOString();
-    const id = memoData.id || Math.random().toString(36).substring(2, 9);
-
-    if (!isEnvConfigured) {
-      // Local fallback edit
-      if (memoData.id) {
-        setMemos(memos.map(item => item.id === memoData.id ? { ...item, ...memoData, updatedAt: now } : item));
-        showToast('[데모] 메모가 임시 수정되었습니다.', 'success');
-      } else {
-        const newItem: Memo = { id, ...memoData, createdAt: now, updatedAt: now };
-        setMemos([newItem, ...memos]);
-        showToast('[데모] 새 메모가 임시 등록되었습니다.', 'success');
-      }
-      return;
-    }
 
     try {
-      // type 값은 반드시 'account' 또는 'site'여야 함
-      if (memoData.type !== 'account' && memoData.type !== 'site') {
-        throw new Error("유효하지 않은 구분 타입입니다 ('account' 또는 'site'만 허용됩니다).");
-      }
-
-      const payload = {
+      // Create DB-aligned snake_case object
+      const payload: any = {
         type: memoData.type,
-        title: memoData.title,
-        content: memoData.content,
+        title: memoData.title || '',
+        content: memoData.content || '',
+        emoji: memoData.emoji || '',
+        color: memoData.color || 'blue',
+        service_name: memoData.serviceName || '',
+        plan_name: memoData.planName || '',
+        payment_content: memoData.paymentContent || '',
+        billing_cycle: memoData.billingCycle || '',
+        payment_amount: memoData.paymentAmount || '',
+        login_id: memoData.loginId || '',
+        password: memoData.password || '',
+        site_url: memoData.siteUrl || '',
       };
 
       if (memoData.id) {
-        // 수정 (Update)
+        // Edit / Update mode
         const { error } = await supabase
           .from('memos')
           .update(payload)
           .eq('id', memoData.id);
 
         if (error) throw error;
-        showToast('메모가 수정되었습니다.', 'success');
+        showToast('성공적으로 수정되었습니다.', 'success');
       } else {
-        // 새 글 생성 (Insert) - id, created_at, updated_at은 제외하고 전송
+        // Create / Insert mode - ID, created_at, updated_at are handled by database
         const { error } = await supabase
           .from('memos')
           .insert(payload);
 
         if (error) throw error;
-        showToast('새 메모가 등록되었습니다.', 'success');
+        showToast('성공적으로 등록되었습니다.', 'success');
       }
 
-      // 저장 성공 후 Supabase에서 memos 목록을 다시 fetch해서 화면에 반영
       await fetchMemos();
     } catch (e: any) {
-      // 브라우저 콘솔과 터미널 로그에 실제 Supabase 오류가 출력되도록 처리
       console.error('Error saving memo to Supabase:', e);
-      // 저장 실패 시 브라우저 화면에 Supabase error.message 표시
-      const errorMsg = e?.message || '알 수 없는 DB 오류가 발생했습니다.';
-      showToast(`저장 실패: ${errorMsg}`, 'error');
+      showToast(`저장 실패: ${e?.message || 'DB 에러'}`, 'error');
     }
   };
 
-  // Delete memo
+  // Delete from Supabase
   const handleDeleteMemo = async (id: string) => {
-    if (!isEnvConfigured) {
-      setMemos(memos.filter(item => item.id !== id));
-      showToast('[데모] 메모가 임시 삭제되었습니다.', 'info');
-      return;
-    }
-
     try {
       const { error } = await supabase
         .from('memos')
@@ -170,269 +154,298 @@ export default function Home() {
         .eq('id', id);
 
       if (error) throw error;
-
-      showToast('메모가 삭제되었습니다.', 'info');
+      showToast('삭제 완료되었습니다.', 'info');
       await fetchMemos();
     } catch (e: any) {
       console.error('Error deleting memo from Supabase:', e);
-      const errorMsg = e?.message || '알 수 없는 DB 오류가 발생했습니다.';
-      showToast(`삭제 실패: ${errorMsg}`, 'error');
+      showToast(`삭제 실패: ${e?.message || 'DB 에러'}`, 'error');
     }
   };
 
-  // Filter & Search Memos
-  const filteredMemos = memos.filter((memo) => {
-    if (selectedTab !== 'all' && memo.type !== selectedTab) {
-      return false;
-    }
-    if (searchQuery.trim() !== '') {
-      const query = searchQuery.toLowerCase();
-      const matchTitle = memo.title.toLowerCase().includes(query);
-      const matchContent = memo.content.toLowerCase().includes(query);
-      return matchTitle || matchContent;
-    }
-    return true;
-  });
+  // 1. Account Search filter logic
+  const filteredAccounts = memos
+    .filter(memo => memo.type === 'account')
+    .filter(memo => {
+      if (!accountQuery.trim()) return true;
+      const query = accountQuery.toLowerCase();
+      const matchService = (memo.serviceName || '').toLowerCase().includes(query);
+      const matchPlan = (memo.planName || '').toLowerCase().includes(query);
+      const matchId = (memo.loginId || '').toLowerCase().includes(query);
+      const matchPayment = (memo.paymentContent || '').toLowerCase().includes(query);
+      return matchService || matchPlan || matchId || matchPayment;
+    });
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  // 2. Site Search filter logic
+  const filteredSites = memos
+    .filter(memo => memo.type === 'site')
+    .filter(memo => {
+      if (!siteQuery.trim()) return true;
+      const query = siteQuery.toLowerCase();
+      const matchName = (memo.title || '').toLowerCase().includes(query);
+      const matchUrl = (memo.siteUrl || '').toLowerCase().includes(query);
+      const matchDesc = (memo.content || '').toLowerCase().includes(query);
+      return matchName || matchUrl || matchDesc;
+    });
 
-    if (diffMins < 60) {
-      return `${diffMins || 1}분 전`;
-    } else if (diffHours < 24) {
-      return `${diffHours}시간 전`;
-    } else {
-      return date.toLocaleDateString('ko-KR', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      });
+  // Masking password logic for display card: 앞 2글자 + 마스킹 + 뒤 2글자
+  const maskPassword = (pwd?: string) => {
+    if (!pwd) return '';
+    if (pwd.length <= 4) {
+      return '••••••••';
     }
+    const start = pwd.slice(0, 2);
+    const end = pwd.slice(-2);
+    const masked = '•'.repeat(Math.max(4, pwd.length - 4));
+    return `${start}${masked}${end}`;
+  };
+
+  const openCreateModal = (type: 'account' | 'site') => {
+    setPreselectedType(type);
+    setSelectedMemo(null);
+    setIsModalOpen(true);
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50">
+    <div className="flex min-h-screen flex-col bg-slate-100/60">
       <Navbar />
 
-      <main className="flex-1 py-8">
+      {/* Main Container: 2-Column Split Grid */}
+      <main className="flex-1 py-6">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           
-          {/* Environment variables warning banner */}
+          {/* Warning Banner */}
           {!isEnvConfigured && (
-            <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 animate-pulse">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 text-amber-700 flex-shrink-0">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                </div>
-                <div>
-                  <p className="font-bold">Supabase 환경변수가 설정되지 않았습니다.</p>
-                  <p className="text-xs text-amber-700 mt-0.5">현재 데모 모드(임시 메모리 작동)로 작동 중입니다. 프로젝트 루트의 <code className="bg-amber-100/80 px-1.5 py-0.5 rounded font-mono font-bold">.env.local</code> 파일을 작성하고 서버를 재시작해주세요.</p>
-                </div>
+            <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm flex items-center gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 flex-shrink-0 animate-bounce">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div>
+                <span className="font-bold">Supabase 연결이 차단되어 데모 데이터가 로드되었습니다.</span> 
+                <span className="text-xs text-amber-700 ml-1">루트의 <code className="bg-amber-200/50 px-1 py-0.5 rounded">.env.local</code>을 정상 설정하고 서버를 재기동해 주세요.</span>
               </div>
             </div>
           )}
 
-          {/* Dashboard Header Options */}
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             
-            {/* Left: Tab selection */}
-            <div className="flex space-x-1 rounded-xl bg-slate-100 p-1 self-start shadow-sm border border-slate-200/50">
-              <button
-                onClick={() => setSelectedTab('all')}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                  selectedTab === 'all'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                전체
-              </button>
-              <button
-                onClick={() => setSelectedTab('account')}
-                className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                  selectedTab === 'account'
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                계정 공유
-              </button>
-              <button
-                onClick={() => setSelectedTab('site')}
-                className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                  selectedTab === 'site'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                사이트 공유
-              </button>
-            </div>
+            {/* LEFT COLUMN: Account Sharing (Col Span 8) */}
+            <section className="lg:col-span-8 bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm min-h-[70vh]">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">🔑</span>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-800">계정 공유</h3>
+                    <p className="text-xs text-slate-400 font-medium">회사 공용 유료 서비스 계정 목록</p>
+                  </div>
+                </div>
+                
+                {/* Search & Add buttons */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="계정 검색..."
+                      value={accountQuery}
+                      onChange={(e) => setAccountQuery(e.target.value)}
+                      className="w-full sm:w-48 rounded-xl border border-slate-200 bg-slate-50/50 py-1.5 pl-8 pr-3 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 transition"
+                    />
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                    </svg>
+                  </div>
+                  <button
+                    onClick={() => openCreateModal('account')}
+                    className="inline-flex items-center gap-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-1.5 text-xs font-semibold text-white shadow transition"
+                  >
+                    + 계정 추가
+                  </button>
+                </div>
+              </div>
 
-            {/* Right: Search + Create Post */}
-            <div className="flex flex-col sm:flex-row gap-3 md:items-center">
-              
-              {/* Search Field */}
-              <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-5 w-5 text-slate-400">
+              {/* Accounts Content */}
+              {isLoading ? (
+                /* Skeleton Loader */
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[1, 2].map((n) => (
+                    <div key={n} className="animate-pulse border border-slate-100 rounded-xl p-5 space-y-3">
+                      <div className="h-5 bg-slate-200 rounded w-1/3"></div>
+                      <div className="h-4 bg-slate-100 rounded"></div>
+                      <div className="h-4 bg-slate-100 rounded w-5/6"></div>
+                    </div>
+                  ))}
+                </div>
+              ) : filteredAccounts.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredAccounts.map((account) => {
+                    const colorMeta = COLOR_MAPS[account.color || 'blue'] || COLOR_MAPS.blue;
+                    return (
+                      <div
+                        key={account.id}
+                        onClick={() => {
+                          setSelectedMemo(account);
+                          setIsModalOpen(true);
+                        }}
+                        className={`group relative flex flex-col justify-between overflow-hidden rounded-2xl border-l-4 ${colorMeta.border} border-slate-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-y-slate-300 hover:border-r-slate-300 transition cursor-pointer`}
+                      >
+                        <div>
+                          {/* Top row */}
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-2xl p-1 bg-slate-50 rounded-lg shadow-inner">{account.emoji || '🔐'}</span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${colorMeta.text} ${colorMeta.lightBg}`}>
+                              {account.planName || '공용 계정'}
+                            </span>
+                          </div>
+
+                          {/* Service Name */}
+                          <h4 className="text-base font-bold text-slate-800 group-hover:text-indigo-600 transition-colors mb-3">
+                            {account.serviceName || account.title}
+                          </h4>
+
+                          {/* Credentials */}
+                          <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-100 space-y-1.5 text-xs font-mono mb-3">
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">ID:</span>
+                              <span className="font-bold text-slate-800 truncate max-w-[170px]">{account.loginId}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">PW:</span>
+                              <span className="font-bold text-slate-700">{maskPassword(account.password)}</span>
+                            </div>
+                          </div>
+
+                          {/* Billing & Cycle Info */}
+                          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mb-2">
+                            <span>💳</span>
+                            <span className="truncate max-w-[200px]">
+                              {account.paymentAmount ? `${account.paymentAmount}` : '금액 정보 없음'} 
+                              {account.billingCycle === 'yearly' ? ' (연)' : account.billingCycle === 'monthly' ? ' (월)' : ''}
+                            </span>
+                          </div>
+
+                          {/* Payment Content Description */}
+                          {account.paymentContent && (
+                            <p className="text-[11px] text-slate-400 line-clamp-1 italic bg-slate-50 p-1.5 rounded">
+                              {account.paymentContent}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Bottom Actions */}
+                        <div className="mt-4 flex items-center justify-end text-[10px] font-bold text-slate-400 group-hover:text-slate-900 transition">
+                          접속 정보 보기
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3 ml-0.5 transition-transform group-hover:translate-x-0.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                          </svg>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center border border-dashed border-slate-200 rounded-xl py-12 text-center text-slate-400">
+                  <span className="text-3xl mb-2">🔍</span>
+                  <p className="text-xs font-semibold">등록된 계정이 없습니다.</p>
+                </div>
+              )}
+            </section>
+
+            {/* RIGHT COLUMN: Site Reference Dashboard (Col Span 4) */}
+            <section className="lg:col-span-4 bg-slate-900 text-white rounded-2xl p-6 shadow-md border border-slate-800 min-h-[70vh] flex flex-col justify-between">
+              <div>
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 border-b border-slate-800 pb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">🌐</span>
+                    <div>
+                      <h3 className="text-base font-bold text-white">사이트 링크</h3>
+                      <p className="text-[10px] text-slate-400">자주 쓰는 업무 포털 및 가이드</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => openCreateModal('site')}
+                    className="inline-flex items-center justify-center gap-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm transition"
+                  >
+                    + 추가
+                  </button>
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative mb-4">
+                  <input
+                    type="text"
+                    placeholder="사이트 검색..."
+                    value={siteQuery}
+                    onChange={(e) => setSiteQuery(e.target.value)}
+                    className="w-full rounded-xl border border-slate-800 bg-slate-800 py-1.5 pl-8 pr-3 text-xs text-white placeholder-slate-500 focus:border-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-600 transition"
+                  />
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-500">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
                   </svg>
                 </div>
-                <input
-                  type="text"
-                  placeholder="제목 및 내용 검색..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full sm:w-64 rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 placeholder-slate-400 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 shadow-sm transition"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-                      <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                    </svg>
-                  </button>
-                )}
-              </div>
 
-              {/* Create Button */}
-              <button
-                onClick={() => {
-                  setSelectedMemo(null);
-                  setIsModalOpen(true);
-                }}
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-slate-800 transition"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
-                새 글 작성
-              </button>
-
-            </div>
-          </div>
-
-          {/* Skeleton Loaders */}
-          {isLoading ? (
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-              {[1, 2, 3].map((n) => (
-                <div key={n} className="animate-pulse rounded-2xl border border-slate-100 bg-white p-6 shadow-sm space-y-4">
-                  <div className="flex justify-between items-center">
-                    <div className="h-6 w-20 bg-slate-200 rounded-full"></div>
-                    <div className="h-4 w-12 bg-slate-100 rounded"></div>
+                {/* Sites Content */}
+                {isLoading ? (
+                  <div className="space-y-3">
+                    {[1, 2].map((n) => (
+                      <div key={n} className="animate-pulse bg-slate-800 rounded-xl p-4 space-y-2">
+                        <div className="h-4 bg-slate-700 rounded w-1/2"></div>
+                        <div className="h-3 bg-slate-700 rounded w-5/6"></div>
+                      </div>
+                    ))}
                   </div>
-                  <div className="h-5 w-3/4 bg-slate-200 rounded"></div>
-                  <div className="space-y-2">
-                    <div className="h-4 bg-slate-100 rounded"></div>
-                    <div className="h-4 bg-slate-100 rounded w-5/6"></div>
+                ) : filteredSites.length > 0 ? (
+                  <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
+                    {filteredSites.map((site) => {
+                      const colorMeta = COLOR_MAPS[site.color || 'green'] || COLOR_MAPS.green;
+                      return (
+                        <div
+                          key={site.id}
+                          onClick={() => {
+                            setSelectedMemo(site);
+                            setIsModalOpen(true);
+                          }}
+                          className={`group flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-800/60 p-3.5 hover:bg-slate-800 transition cursor-pointer`}
+                        >
+                          <span className="text-xl p-1.5 bg-slate-900 rounded-lg flex-shrink-0">{site.emoji || '🌐'}</span>
+                          <div className="overflow-hidden flex-1">
+                            <h5 className="text-xs font-bold text-slate-100 group-hover:text-emerald-400 transition truncate">
+                              {site.title}
+                            </h5>
+                            <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5 select-none font-mono">
+                              {site.siteUrl}
+                            </p>
+                            {site.content && (
+                              <p className="text-[10px] text-slate-400 line-clamp-2 mt-1.5 font-medium bg-slate-900/40 p-1 rounded">
+                                {site.content}
+                              </p>
+                            )}
+                          </div>
+                          <span className="text-slate-500 group-hover:text-slate-300 self-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                            </svg>
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="h-4 w-16 bg-slate-100 rounded ml-auto"></div>
-                </div>
-              ))}
-            </div>
-          ) : filteredMemos.length > 0 ? (
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredMemos.map((memo) => (
-                <div
-                  key={memo.id}
-                  onClick={() => {
-                    setSelectedMemo(memo);
-                    setIsModalOpen(true);
-                  }}
-                  className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md hover:border-slate-300 transition-all duration-200 cursor-pointer"
-                >
-                  <div>
-                    {/* Badge */}
-                    <div className="flex items-center justify-between mb-4">
-                      {memo.type === 'account' ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-700/10">
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                          </svg>
-                          계정 공유
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-700/10">
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.909 17.909 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-.778.099-1.533.284-2.253" />
-                          </svg>
-                          사이트 공유
-                        </span>
-                      )}
-                      
-                      <span className="text-xs text-slate-400 group-hover:text-slate-600 transition duration-200">
-                        {formatDate(memo.updatedAt)}
-                      </span>
-                    </div>
-
-                    {/* Title */}
-                    <h4 className="text-lg font-bold text-slate-900 group-hover:text-indigo-600 transition-colors duration-200 mb-2 line-clamp-1">
-                      {memo.title}
-                    </h4>
-
-                    {/* Preview Content */}
-                    <p className="text-sm text-slate-500 line-clamp-3 font-mono leading-relaxed bg-slate-50/50 p-2.5 rounded-lg border border-slate-100/50 select-none">
-                      {memo.content}
-                    </p>
-                  </div>
-
-                  {/* Detail Link Prompt */}
-                  <div className="mt-4 flex items-center justify-end text-xs font-semibold text-slate-400 group-hover:text-slate-900 transition duration-200">
-                    상세보기
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5 ml-1 transition-transform group-hover:translate-x-0.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                    </svg>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            /* Empty State */
-            <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-white py-16 px-4 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-50 text-slate-400 mb-4">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-6 w-6">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                </svg>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900">등록된 글이 없습니다.</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                {searchQuery ? '검색어와 일치하는 공유 메모가 없습니다.' : '첫 번째 공유 메모를 작성해보세요!'}
-              </p>
-              <div className="mt-6">
-                {searchQuery ? (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition"
-                  >
-                    검색 초기화
-                  </button>
                 ) : (
-                  <button
-                    onClick={() => {
-                      setSelectedMemo(null);
-                      setIsModalOpen(true);
-                    }}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-slate-800 transition"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                    </svg>
-                    첫 메모 작성
-                  </button>
+                  <div className="flex flex-col items-center justify-center border border-dashed border-slate-800 rounded-xl py-12 text-center text-slate-600">
+                    <span className="text-2xl mb-1">🔍</span>
+                    <p className="text-[10px] font-semibold">등록된 사이트가 없습니다.</p>
+                  </div>
                 )}
               </div>
-            </div>
-          )}
 
+              {/* Sidebar Footer */}
+              <div className="border-t border-slate-800 pt-4 mt-4 text-[10px] text-slate-500 flex justify-between">
+                <span>Total: {filteredSites.length} Links</span>
+                <span>실시간 저장 완료</span>
+              </div>
+            </section>
+
+          </div>
         </div>
       </main>
 
@@ -458,7 +471,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Memo Modal */}
+      {/* Unified Form/View Modal */}
       <MemoModal
         isOpen={isModalOpen}
         onClose={() => {

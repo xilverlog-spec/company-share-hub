@@ -17,4 +17,12 @@ export interface Memo {
   loginId?: string;
   password?: string;
   siteUrl?: string;
+  
+  // Custom new fields
+  currentUser?: string;
+  extensionNumber?: string;
+  usageStartDate?: string;
+  usageEndDate?: string;
+  category?: string;
 }
+

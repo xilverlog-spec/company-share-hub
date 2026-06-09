@@ -542,7 +542,7 @@ export default function MemoModal({ isOpen, onClose, memo, onSave, onDelete }: M
 
       onClose();
     } catch (err: any) {
-      console.error('Supabase Save Error caught in Modal:', err);
+      console.error('Database Save Error caught in Modal:', err);
       setError(err?.message || '저장 중 오류가 발생했습니다.');
     }
   };

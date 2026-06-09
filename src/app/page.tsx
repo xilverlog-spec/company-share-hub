@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import Navbar from '@/components/Navbar';
 import MemoModal from '@/components/MemoModal';
 import { Memo } from '@/types';
-import { supabase } from '@/lib/supabase';
+import { db, isConfigured as isFirebaseConfigured } from '@/lib/firebase';
+import { collection, getDocs, doc, addDoc, updateDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 
 // Premium color specification from READ ME.md
 const COLOR_MAPS: Record<string, { border: string; bg: string; text: string; lightBg: string; textHover: string; pillBg: string }> = {
@@ -157,11 +158,7 @@ export default function Home() {
 
   // Check env settings
   useEffect(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !key || url.includes('YOUR_SUPABASE') || key.includes('YOUR_SUPABASE')) {
-      setIsEnvConfigured(false);
-    }
+    setIsEnvConfigured(isFirebaseConfigured);
   }, []);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -180,43 +177,38 @@ export default function Home() {
   const fetchMemos = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('memos')
-        .select('*')
-        .order('updated_at', { ascending: false });
-
-      if (error) throw error;
-
-      if (data) {
-        const mapped: Memo[] = data.map((item: any) => ({
-          id: item.id,
+      const q = query(collection(db, 'memos'), orderBy('updatedAt', 'desc'));
+      const querySnapshot = await getDocs(q);
+      const mapped: Memo[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const item = docSnap.data();
+        mapped.push({
+          id: docSnap.id,
           type: item.type as 'account' | 'site',
           title: item.title,
           content: item.content,
-          createdAt: item.created_at,
-          updatedAt: item.updated_at,
+          createdAt: item.createdAt || item.created_at || new Date().toISOString(),
+          updatedAt: item.updatedAt || item.updated_at || new Date().toISOString(),
           emoji: item.emoji,
           color: item.color,
-          serviceName: item.service_name,
-          planName: item.plan_name,
-          paymentContent: item.payment_content,
-          billingCycle: item.billing_cycle,
-          paymentAmount: item.payment_amount,
-          loginId: item.login_id,
+          serviceName: item.serviceName !== undefined ? item.serviceName : item.service_name,
+          planName: item.planName !== undefined ? item.planName : item.plan_name,
+          paymentContent: item.paymentContent !== undefined ? item.paymentContent : item.payment_content,
+          billingCycle: item.billingCycle !== undefined ? item.billingCycle : item.billing_cycle,
+          paymentAmount: item.paymentAmount !== undefined ? item.paymentAmount : item.payment_amount,
+          loginId: item.loginId !== undefined ? item.loginId : item.login_id,
           password: item.password,
-          siteUrl: item.site_url,
-          currentUser: item.current_user,
-          extensionNumber: item.extension_number,
-          usageStartDate: item.usage_start_date,
-          usageEndDate: item.usage_end_date,
+          siteUrl: item.siteUrl !== undefined ? item.siteUrl : item.site_url,
+          currentUser: item.currentUser !== undefined ? item.currentUser : item.current_user,
+          extensionNumber: item.extensionNumber !== undefined ? item.extension_number : item.extension_number,
+          usageStartDate: item.usageStartDate !== undefined ? item.usageStartDate : item.usage_start_date,
+          usageEndDate: item.usageEndDate !== undefined ? item.usageEndDate : item.usage_end_date,
           category: item.category || '기타',
-        }));
-        setMemos(mapped);
-      } else {
-        setMemos([]);
-      }
+        });
+      });
+      setMemos(mapped);
     } catch (e: any) {
-      console.error('Failed to fetch from Supabase:', e);
+      console.error('Failed to fetch from Firebase Firestore:', e);
       showToast(`DB 불러오기 실패: ${e?.message || '네트워크 오류'}`, 'error');
     } finally {
       setIsLoading(false);
@@ -229,51 +221,49 @@ export default function Home() {
 
   // Write/Edit - returns Promise to let the Modal catch errors
   const handleSaveMemo = async (memoData: Partial<Memo> & { type: 'account' | 'site' }) => {
+    const nowStr = new Date().toISOString();
     const payload: any = {
       type: memoData.type,
       title: memoData.title || '',
       content: memoData.content || '',
       emoji: memoData.emoji || (memoData.type === 'account' ? '🔐' : '🌐'),
       color: memoData.color || 'brand-main',
-      service_name: memoData.serviceName || '',
-      plan_name: memoData.planName || '',
-      payment_content: memoData.paymentContent || '',
-      billing_cycle: memoData.billingCycle || '',
-      payment_amount: memoData.paymentAmount || '',
-      login_id: memoData.loginId || '',
+      serviceName: memoData.serviceName || '',
+      planName: memoData.planName || '',
+      paymentContent: memoData.paymentContent || '',
+      billingCycle: memoData.billingCycle || '',
+      paymentAmount: memoData.paymentAmount || '',
+      loginId: memoData.loginId || '',
       password: memoData.password || '',
-      site_url: memoData.siteUrl || '',
-      current_user: memoData.currentUser || '',
-      extension_number: memoData.extensionNumber || '',
-      usage_start_date: memoData.usageStartDate || null,
-      usage_end_date: memoData.usageEndDate || null,
+      siteUrl: memoData.siteUrl || '',
+      currentUser: memoData.currentUser || '',
+      extensionNumber: memoData.extensionNumber || '',
+      usageStartDate: memoData.usageStartDate || null,
+      usageEndDate: memoData.usageEndDate || null,
       category: memoData.category || '기타',
+      updatedAt: nowStr,
     };
 
     try {
       if (memoData.id) {
-        // Update mode - EQ ID filter
-        const { error } = await supabase
-          .from('memos')
-          .update(payload)
-          .eq('id', memoData.id);
-
-        if (error) throw error;
+        // Update mode - set/update doc in Firestore
+        const docRef = doc(db, 'memos', memoData.id);
+        await updateDoc(docRef, payload);
         showToast('성공적으로 수정되었습니다.', 'success');
       } else {
-        // Insert mode - let database generate id, created_at, updated_at
-        const { error } = await supabase
-          .from('memos')
-          .insert(payload);
-
-        if (error) throw error;
+        // Insert mode - auto generate document ID
+        const colRef = collection(db, 'memos');
+        await addDoc(colRef, {
+          ...payload,
+          createdAt: nowStr,
+        });
         showToast('성공적으로 등록되었습니다.', 'success');
       }
       
       // Reload UI lists
       await fetchMemos();
     } catch (e: any) {
-      console.error('Supabase save error details:', e);
+      console.error('Firebase save error details:', e);
       throw e; // rethrow to let the modal catch and display it
     }
   };
@@ -281,16 +271,12 @@ export default function Home() {
   // Delete
   const handleDeleteMemo = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from('memos')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
+      const docRef = doc(db, 'memos', id);
+      await deleteDoc(docRef);
       showToast('삭제 완료되었습니다.', 'info');
       await fetchMemos();
     } catch (e: any) {
-      console.error('Supabase delete error details:', e);
+      console.error('Firebase delete error details:', e);
       showToast(`삭제 실패: ${e?.message || 'DB 에러'}`, 'error');
     }
   };
@@ -501,15 +487,15 @@ export default function Home() {
       <main className="flex-1 py-8 relative z-10">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           
-          {/* Supabase Disconnected Warning Banner */}
+          {/* Firebase Disconnected Warning Banner */}
           {!isEnvConfigured && (
             <div className="mb-6 rounded-2xl border border-rose-200 bg-rose-50/90 p-4.5 text-xs text-rose-800 shadow-sm flex items-center gap-3 backdrop-blur-md animate-pulse">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 flex-shrink-0 text-rose-600">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
               <div>
-                <span className="font-bold">Supabase 환경변수 연결 설정 필요:</span> 
-                <span className="text-rose-700 ml-1">루트 경로의 `.env.local` 파일에서 Supabase URL과 Anon Key 설정을 진행한 뒤 앱을 이용해 주세요.</span>
+                <span className="font-bold">Firebase 환경변수 연결 설정 필요:</span> 
+                <span className="text-rose-700 ml-1">루트 경로의 `.env.local` 파일에서 Firebase API Key 및 Project ID 등의 설정을 진행한 뒤 앱을 이용해 주세요.</span>
               </div>
             </div>
           )}
